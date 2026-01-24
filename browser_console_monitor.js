@@ -1,25 +1,27 @@
 // Melon Ticket Global - Browser Console Seat Monitor
 // Paste this into your browser console while on the tkglobal.melon.com reservation page
 
-// Configure these
+// Configure these with your event's values
 const MELON_CONFIG = {
-  prodId: "",        // Your product ID
-  scheduleNo: "",    // Your schedule number
-  pocCode: "",       // Your POC code
-  checkInterval: 10000 // 10 seconds
+  prodId: "event_prod_id",           // e.g. "212638"
+  scheduleNo: "event_schedule_no",   // e.g. "100001"
+  pocCode: "event_poc_code",         // e.g. "SC0002"
+  checkInterval: 10000               // 10 seconds
 };
 
 const DISCORD_CONFIG = {
-  webhookUrl: "",    // Your Discord webhook URL
-  userId: ""         // Your Discord user ID (for mentions)
+  webhookUrl: "your_discord_webhook_url",  // Optional - leave empty to disable
+  userId: "your_discord_user_id"           // Optional - for mentions
 };
 
 async function melonSendDiscord(message) {
-  if (!DISCORD_CONFIG.webhookUrl) {
+  if (!DISCORD_CONFIG.webhookUrl || DISCORD_CONFIG.webhookUrl === "your_discord_webhook_url") {
     console.log('Discord webhook not configured, skipping notification');
     return;
   }
-  const tag = DISCORD_CONFIG.userId ? `<@${DISCORD_CONFIG.userId}>` : '';
+  const tag = (DISCORD_CONFIG.userId && DISCORD_CONFIG.userId !== "your_discord_user_id") 
+    ? `<@${DISCORD_CONFIG.userId}>` 
+    : '';
   await fetch(DISCORD_CONFIG.webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

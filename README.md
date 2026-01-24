@@ -1,3 +1,81 @@
+# Melon Ticket Alert Script
+
+Automatically receive alerts when concert seats become available on Melon Ticket.
+
+---
+
+# For Melon Ticket Global (tkglobal.melon.com)
+
+## Important: Anti-Bot Protection
+
+The global Melon Ticket site (`tkglobal.melon.com`) has anti-bot protection that blocks API requests from outside the browser. This means:
+
+- **Does NOT work:** Python scripts, curl, Postman
+- **Works:** Browser console (JavaScript)
+
+When you copy a request from Network tab and try it in curl or Postman, you'll get a `403 Forbidden` error. However, running the same request via `fetch()` in the browser console works because it uses the browser's existing session.
+
+## Browser Console Monitor (tkglobal)
+
+Use `browser_console_monitor.js` to monitor for available seats on the global site.
+
+### How to get API parameters
+
+These are values for the specific event you're interested in:
+
+1. Go to the concert reservation page on `tkglobal.melon.com`
+2. Open Developer Tools (Cmd+Option+I or F12)
+3. Go to the **Network** tab
+4. Interact with the seat selection (click on areas, etc.)
+5. Look for requests like `seatMapList.json` or `getAreaMap.json`
+6. Note down these values from the request URL/payload:
+   - `prodId` - Product/event ID
+   - `scheduleNo` - Schedule number
+   - `pocCode` - Point of contact code
+
+### How to run
+
+1. Open the concert reservation page on `tkglobal.melon.com` (make sure you're logged in)
+2. Open Developer Tools → **Console** tab
+3. Copy the contents of `browser_console_monitor.js`
+4. Edit the configuration at the top with your event's values:
+
+```javascript
+const MELON_CONFIG = {
+  prodId: "event_prod_id",           // e.g. "212638"
+  scheduleNo: "event_schedule_no",   // e.g. "100001"
+  pocCode: "event_poc_code",         // e.g. "SC0002"
+  checkInterval: 10000               // 10 seconds
+};
+
+const DISCORD_CONFIG = {
+  webhookUrl: "your_discord_webhook_url",  // Optional
+  userId: "your_discord_user_id"           // Optional, for mentions
+};
+```
+
+5. Paste the script into the console and press Enter
+6. Keep the browser tab open — the script will:
+   - Check all seat blocks every 10 seconds
+   - Log results to the console
+   - Show a browser alert when seats are found
+   - Send a Discord notification (if configured)
+
+### To stop monitoring
+
+Type this in the console:
+```javascript
+clearInterval(melonMonitorInterval)
+```
+
+---
+
+# OLD - Before Fork (ticket.melon.com)
+
+The sections below are from the original repository and are for the Korean domestic site (`ticket.melon.com`). The Python scripts may not work on the global site due to anti-bot protection.
+
+---
+
 # Melon 티켓 자동 알림 스크립트
 
 Python으로 멜론 콘서트 자리 발생시 자동으로 알림을 받습니다.
@@ -106,4 +184,3 @@ $ crontab -e
 # <main.py path>에는 main.py의 전체 경로를 입력해주세요.
 * * * * * <python path>/python3 <check_map_seat.py path>/check_map_seat.py
 ```
- 
