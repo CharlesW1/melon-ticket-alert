@@ -1,27 +1,53 @@
 // Melon Ticket Global - Browser Console Seat Monitor
-// Paste this into your browser console while on the tkglobal.melon.com reservation page
+// Paste this into your browser console while on the tkglobal.melon.com reservation page after logging in
 
-// Configure these with your event's values
+/**************** CONFIG ****************/
+
 const MELON_CONFIG = {
-  prodId: "event_prod_id",           // e.g. "212638"
-  scheduleNo: "event_schedule_no",   // e.g. "100001"
-  pocCode: "event_poc_code",         // e.g. "SC0002"
-  checkInterval: 10000               // 10 seconds
+  prodId: "212638",
+  scheduleNo: "100001",
+  pocCode: "SC0002",
+  checkInterval: 15 * 60 * 1000      // 15 minutes for one complete loop
 };
 
 const DISCORD_CONFIG = {
-  webhookUrl: "your_discord_webhook_url",  // Optional - leave empty to disable
-  userId: "your_discord_user_id"           // Optional - for mentions
+  webhookUrl: "your_discord_webhook_url", // Replace with your webhook URL
+  userId: "176444535356784640"
 };
+
+
+/**************** UTIL ****************/
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function now() {
+  return new Date().toLocaleTimeString();
+}
+
+let lastRequestTime = 0;
+let requestThrottleMs = 10000; // Default to 10 seconds
+
+async function throttledFetch(url) {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+  const delayNeeded = Math.max(0, requestThrottleMs - timeSinceLastRequest);
+
+  if (delayNeeded > 0) {
+    await sleep(delayNeeded);
+  }
+
+  lastRequestTime = Date.now();
+  return fetch(url);
+}
 
 async function melonSendDiscord(message) {
   if (!DISCORD_CONFIG.webhookUrl || DISCORD_CONFIG.webhookUrl === "your_discord_webhook_url") {
     console.log('Discord webhook not configured, skipping notification');
     return;
   }
-  const tag = (DISCORD_CONFIG.userId && DISCORD_CONFIG.userId !== "your_discord_user_id") 
-    ? `<@${DISCORD_CONFIG.userId}>` 
-    : '';
+  const tag = (DISCORD_CONFIG.userId && DISCORD_CONFIG.userId !== "your_discord_user_id") ? `<@${DISCORD_CONFIG.userId}>` : '';
   await fetch(DISCORD_CONFIG.webhookUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -29,61 +55,142 @@ async function melonSendDiscord(message) {
   });
 }
 
+
+/**************** MELON API ****************/
+
 async function melonGetBlockList() {
-  const url = `https://tkglobal.melon.com/tktapi/product/getAreaMap.json?callback=getBlockGradeSeatMapCallBack&v=1&prodId=${MELON_CONFIG.prodId}&scheduleNo=${MELON_CONFIG.scheduleNo}&pocCode=${MELON_CONFIG.pocCode}`;
-  const response = await fetch(url);
+  console.log(`[${now()}] 📥 Fetching block list...`);
+
+  const url =
+    `https://tkglobal.melon.com/tktapi/product/getAreaMap.json` +
+    `?callback=getBlockGradeSeatMapCallBack` +
+    `&v=1` +
+    `&prodId=${MELON_CONFIG.prodId}` +
+    `&scheduleNo=${MELON_CONFIG.scheduleNo}` +
+    `&pocCode=${MELON_CONFIG.pocCode}`;
+
+  const response = await throttledFetch(url);
   const text = await response.text();
-  const data = JSON.parse(text.replace("/**/getBlockGradeSeatMapCallBack(", "").replace(");", ""));
-  return data.seatData.da.sb;
+
+  const json = JSON.parse(
+    text
+      .replace("/**/getBlockGradeSeatMapCallBack(", "")
+      .replace(");", "")
+  );
+
+  const blocks = json?.seatData?.da?.sb || [];
+
+  console.log(`[${now()}] ✅ Loaded ${blocks.length} blocks.`);
+  return blocks;
 }
 
-async function melonCheckBlock(block) {
-  const url = `https://tkglobal.melon.com/tktapi/product/seat/seatMapList.json?callback=getSeatListCallBack&v=1&prodId=${MELON_CONFIG.prodId}&scheduleNo=${MELON_CONFIG.scheduleNo}&blockId=${block.sbid}&pocCode=${MELON_CONFIG.pocCode}&corpCodeNo=`;
-  const response = await fetch(url);
-  const text = await response.text();
-  const data = JSON.parse(text.replace("/**/getSeatListCallBack(", "").replace(");", ""));
-  
-  if (data.seatData) {
-    return data.seatData.st[0].ss.filter(s => s.sid !== null).length;
-  }
-  return 0;
-}
+async function melonCheckSingleBlock(block) {
+  const zone = block.sntv?.a || "UNKNOWN";
+  const floor = block.sntv?.f || "UNKNOWN";
+  const blockId = block.sbid;
 
-async function melonCheckAllSeats() {
-  const timestamp = new Date().toLocaleTimeString();
-  console.log(`\n[${timestamp}] Starting check...`);
-  
+  const url =
+    `https://tkglobal.melon.com/tktapi/product/seat/seatMapList.json` +
+    `?callback=getSeatListCallBack` +
+    `&v=1` +
+    `&prodId=${MELON_CONFIG.prodId}` +
+    `&scheduleNo=${MELON_CONFIG.scheduleNo}` +
+    `&blockId=${blockId}` +
+    `&pocCode=${MELON_CONFIG.pocCode}` +
+    `&corpCodeNo=`;
+
+  console.log(`[${now()}] 🔎 Checking block: Floor ${floor} | ${zone} | sbid=${blockId}`);
+
   try {
-    const blocks = await melonGetBlockList();
-    let totalFound = 0;
-    let foundZones = [];
-    
-    for (const block of blocks) {
-      const zoneName = block.sntv?.a || `Block ${block.sbid}`;
-      const available = await melonCheckBlock(block);
-      
-      if (available > 0) {
-        console.log(`  ✅ ${zoneName}: ${available} seats available!`);
-        totalFound += available;
-        foundZones.push(`${zoneName}: ${available}`);
-      } else {
-        console.log(`  ⬚ ${zoneName}: 0 seats`);
-      }
+    const response = await throttledFetch(url);
+    const text = await response.text();
+
+    const json = JSON.parse(
+      text
+        .replace("/**/getSeatListCallBack(", "")
+        .replace(");", "")
+    );
+
+    const seats = json?.seatData?.st?.[0]?.ss?.filter(s => s.sid !== null) || [];
+    const count = seats.length;
+
+    if (count > 0) {
+      console.log(`[${now()}] 🎫 FOUND ${count} seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
+      await melonSendDiscord(`🎫 **${count} seats available**\nFloor ${floor} | ${zone} (${blockId})`);
+    } else {
+      console.log(`[${now()}] ⬚ No seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
     }
-    
-    console.log(`[${timestamp}] Done. Checked ${blocks.length} blocks, ${totalFound} total seats found.`);
-    
-    if (totalFound > 0) {
-      alert(`🎫 ${totalFound} TOTAL SEATS AVAILABLE!`);
-      await melonSendDiscord(`🎫 ${totalFound} SEATS AVAILABLE!\n${foundZones.join('\n')}`);
-    }
+
   } catch (e) {
-    console.error('Check failed:', e);
+    console.error(`[${now()}] ❌ Failed checking Floor ${floor} | ${zone} (sbid=${blockId})`, e);
   }
 }
 
-// Start monitoring
-const melonMonitorInterval = setInterval(melonCheckAllSeats, MELON_CONFIG.checkInterval);
-melonCheckAllSeats();
-console.log('🔍 Monitoring ALL blocks! Keep this tab open.');
-console.log('To stop monitoring: clearInterval(melonMonitorInterval)');
+
+/**************** SORTING ****************/
+
+function sortBlocks(blocks) {
+  return blocks.sort((a, b) => {
+    const floorA = Number(a.sntv?.f ?? -1);
+    const floorB = Number(b.sntv?.f ?? -1);
+    if (floorA !== floorB) return floorA - floorB;
+
+    const zoneA = (a.sntv?.a || "").toUpperCase();
+    const zoneB = (b.sntv?.a || "").toUpperCase();
+    if (zoneA !== zoneB) return zoneA.localeCompare(zoneB);
+
+    return a.sbid - b.sbid;
+  });
+}
+
+function logSortedBlocks(blocks) {
+  const table = blocks.map(b => ({
+    floor: b.sntv?.f ?? "UNKNOWN",
+    zone: b.sntv?.a ?? "UNKNOWN",
+    sbid: b.sbid
+  }));
+
+  console.log(`[${now()}] 📋 Sorted block list:`);
+  console.table(table);
+}
+
+/**************** MONITOR LOOP ****************/
+
+let blocks = [];
+let blockIndex = 0;
+
+async function startMelonMonitor() {
+  if (!DISCORD_CONFIG.webhookUrl || DISCORD_CONFIG.webhookUrl === "your_discord_webhook_url") {
+    console.log('Discord webhook not configured, skipping notification');
+  }
+  
+  blocks = await melonGetBlockList();
+
+  if (blocks.length === 0) {
+    console.error("❌ No blocks found. Stopping.");
+    return;
+  }
+
+  // 🔁 Sort blocks by floor, then alphabetically
+  blocks = sortBlocks(blocks);
+
+  // 🧾 Log the sorted list in table form
+  logSortedBlocks(blocks);
+
+  // Calculate request interval based on loop time and number of blocks
+  const requestIntervalMs = Math.floor(MELON_CONFIG.checkInterval / blocks.length);
+  requestThrottleMs = Math.max(requestIntervalMs, 10000); // Minimum 10 seconds
+  console.log(`🔁 Starting staggered monitor: ${blocks.length} blocks in 15 minutes (${Math.round(requestIntervalMs / 1000)}s per block)`);
+  console.log(`⏱️ Request throttle: ${requestThrottleMs / 1000}s between requests`);
+
+  while (true) {
+    const block = blocks[blockIndex];
+    await melonCheckSingleBlock(block);
+
+    blockIndex = (blockIndex + 1) % blocks.length;
+  }
+}
+
+/**************** START ****************/
+
+startMelonMonitor().catch(e => console.error("Monitor error:", e));
