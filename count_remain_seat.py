@@ -13,13 +13,18 @@ slack_webhook_url = ""
 #######################################################
 
 def main() -> None:
-    for i in range(30):
-        seats = get_seats_summary()
-        messages = check_remaining_seats(seats['summary'])
-        send_message(messages)
-        time.sleep(2)
+    # Optimized: Use requests.Session to reuse connections across iterations and Slack notifications
+    with requests.Session() as session:
+        for i in range(30):
+            try:
+                seats = get_seats_summary(session)
+                messages = check_remaining_seats(seats['summary'])
+                send_message(session, messages)
+            except Exception as e:
+                print(f"Error in loop {i}: {e}")
+            time.sleep(2)
         
-def get_seats_summary() -> None:
+def get_seats_summary(session) -> dict:
     url = "https://ticket.melon.com/tktapi/product/summary.json?v=1" 
    
     body = {
@@ -28,9 +33,9 @@ def get_seats_summary() -> None:
         'scheduleNo': scheduleNo
     }
 
+    # Optimized: Removed hardcoded Content-Length to improve robustness
     header = {
         'Accept': 'text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01',
-        'Content-Length': '76',
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         'Cookie': cookie,
         'Host': 'ticket.melon.com',
@@ -38,7 +43,8 @@ def get_seats_summary() -> None:
         'User-Agent': 'X'
     }
 
-    response = requests.post(url,headers=header,data=body)
+    # Optimized: Use session for connection reuse
+    response = session.post(url, headers=header, data=body)
     return response.json()
 
 def check_remaining_seats(seats: list) -> list:
@@ -50,9 +56,10 @@ def check_remaining_seats(seats: list) -> list:
 
     return result
 
-def send_message(messages: list) -> None:
+def send_message(session, messages: list) -> None:
+    # Optimized: Use session for multiple Slack notifications
     for message in messages:
-        response = requests.post(slack_webhook_url, json={'text' : message})
+        response = session.post(slack_webhook_url, json={'text' : message})
    
 def generate_message(seat: dict) -> str: 
     message = ""
@@ -64,4 +71,5 @@ def generate_message(seat: dict) -> str:
     message += "에 잔여좌석 " + str(seat['realSeatCntlk']) + "개 발생! "
     return message
 
-main()
+if __name__ == "__main__":
+    main()
