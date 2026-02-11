@@ -239,13 +239,6 @@ async function startMelonMonitor() {
       blockIndex = (blockIndex + 1) % blocks.length;
     }
 
-    // Refresh block list after every full cycle of normal blocks
-    if (blockIndex === 0) {
-      const refreshedBlocks = await melonGetBlockList();
-      if (refreshedBlocks.length > 0) {
-        blocks = sortBlocks(refreshedBlocks);
-      }
-    }
   }
 }
 
