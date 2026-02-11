@@ -30,10 +30,13 @@ function now() {
 let lastRequestTime = 0;
 let requestThrottleMs = 10000; // Default to 10 seconds
 
-async function throttledFetch(url) {
+async function throttledFetch(url, throttleOverrideMs = null) {
   const currentTime = Date.now();
   const timeSinceLastRequest = currentTime - lastRequestTime;
-  const delayNeeded = Math.max(0, requestThrottleMs - timeSinceLastRequest);
+
+  // Use override if provided (e.g. for high-frequency priority checks)
+  const throttle = throttleOverrideMs !== null ? throttleOverrideMs : requestThrottleMs;
+  const delayNeeded = Math.max(0, throttle - timeSinceLastRequest);
 
   if (delayNeeded > 0) {
     await sleep(delayNeeded);
@@ -93,13 +96,17 @@ async function melonGetBlockList() {
   }
 }
 
-// Optimized: Cache to prevent redundant notifications for the same seat count
+// Optimized: Store seat counts to track priority blocks
 const seatCache = new Map();
 
 async function melonCheckSingleBlock(block) {
   const zone = block.sntv?.a || "UNKNOWN";
   const floor = block.sntv?.f || "UNKNOWN";
   const blockId = block.sbid;
+
+  const hasSeatsPreviously = seatCache.get(blockId) > 0;
+  // Use halved throttle for high-frequency checks if seats were previously found
+  const throttleOverride = hasSeatsPreviously ? Math.max(requestThrottleMs / 2, 5000) : null;
 
   const url =
     `https://tkglobal.melon.com/tktapi/product/seat/seatMapList.json` +
@@ -111,10 +118,11 @@ async function melonCheckSingleBlock(block) {
     `&pocCode=${MELON_CONFIG.pocCode}` +
     `&corpCodeNo=`;
 
-  console.log(`[${now()}] 🔎 Checking block: Floor ${floor} | ${zone} | sbid=${blockId}`);
+  const priorityLabel = hasSeatsPreviously ? "[PRIORITY] " : "";
+  console.log(`[${now()}] ${priorityLabel}🔎 Checking block: Floor ${floor} | ${zone} | sbid=${blockId}`);
 
   try {
-    const response = await throttledFetch(url);
+    const response = await throttledFetch(url, throttleOverride);
     const text = await response.text();
 
     const json = JSON.parse(
@@ -123,7 +131,7 @@ async function melonCheckSingleBlock(block) {
         .replace(");", "")
     );
 
-    // Optimized: Count seats without creating a temporary filtered array (efficient for large seat maps)
+    // Optimized: Count seats without creating a temporary filtered array
     let count = 0;
     const ss = json?.seatData?.st?.[0]?.ss;
     if (ss) {
@@ -132,18 +140,12 @@ async function melonCheckSingleBlock(block) {
       }
     }
 
-    const lastCount = seatCache.get(blockId);
-
     if (count > 0) {
-      // Optimized: Only notify if the seat count has changed to avoid spamming
-      if (count !== lastCount) {
-        console.log(`[${now()}] 🎫 FOUND ${count} seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
-        await melonSendDiscord(`🎫 **${count} seats available**\nFloor ${floor} | ${zone} (${blockId})`);
-      } else {
-        console.log(`[${now()}] 🎫 Seats still available (${count}) in Floor ${floor} | ${zone} (sbid=${blockId})`);
-      }
+      // Reverted: Repeated notifications enabled as requested by user for time-sensitivity
+      console.log(`[${now()}] 🎫 FOUND ${count} seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
+      await melonSendDiscord(`🎫 **${count} seats available**\nFloor ${floor} | ${zone} (${blockId})`);
     } else {
-      if (lastCount > 0) {
+      if (hasSeatsPreviously) {
         console.log(`[${now()}] ⬚ Seats are now GONE in Floor ${floor} | ${zone} (sbid=${blockId})`);
       } else {
         console.log(`[${now()}] ⬚ No seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
@@ -151,9 +153,11 @@ async function melonCheckSingleBlock(block) {
     }
 
     seatCache.set(blockId, count);
+    return count;
 
   } catch (e) {
     console.error(`[${now()}] ❌ Failed checking Floor ${floor} | ${zone} (sbid=${blockId})`, e);
+    return 0;
   }
 }
 
@@ -189,6 +193,7 @@ function logSortedBlocks(blocks) {
 
 let blocks = [];
 let blockIndex = 0;
+let priorityBlockIndex = 0;
 
 async function startMelonMonitor() {
   if (!DISCORD_CONFIG.webhookUrl || DISCORD_CONFIG.webhookUrl === "your_discord_webhook_url") {
@@ -218,12 +223,23 @@ async function startMelonMonitor() {
   lastRequestTime = Date.now() - requestThrottleMs;
 
   while (true) {
-    const block = blocks[blockIndex];
-    await melonCheckSingleBlock(block);
+    // Interleave priority blocks (those with seats) to double their check frequency
+    const priorityBlocks = blocks.filter(b => seatCache.get(b.sbid) > 0);
 
-    blockIndex = (blockIndex + 1) % blocks.length;
+    if (priorityBlocks.length > 0) {
+      // Check one normal block
+      await melonCheckSingleBlock(blocks[blockIndex]);
+      blockIndex = (blockIndex + 1) % blocks.length;
 
-    // Optimized: Refresh block list after every full loop to catch venue changes
+      // Then check one priority block (interleaving)
+      await melonCheckSingleBlock(priorityBlocks[priorityBlockIndex]);
+      priorityBlockIndex = (priorityBlockIndex + 1) % priorityBlocks.length;
+    } else {
+      await melonCheckSingleBlock(blocks[blockIndex]);
+      blockIndex = (blockIndex + 1) % blocks.length;
+    }
+
+    // Refresh block list after every full cycle of normal blocks
     if (blockIndex === 0) {
       const refreshedBlocks = await melonGetBlockList();
       if (refreshedBlocks.length > 0) {

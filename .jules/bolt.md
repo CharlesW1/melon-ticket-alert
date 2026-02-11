@@ -6,3 +6,7 @@
 ## 2026-02-11 - JavaScript Monitor Optimization
 **Learning:** Browser console scripts often suffer from "spammability" and memory churn. Using a simple Map for state tracking (seat counts) prevents redundant network notifications. Also, manual loops for counting are more efficient than .filter().length for large seat maps as they avoid temporary array allocations.
 **Action:** Use state tracking to deduplicate notifications and avoid array-allocating methods in high-frequency monitoring loops.
+
+## 2026-02-11 - Dynamic Frequency Scaling for Priority Monitoring
+**Learning:** In high-stakes monitoring scenarios like ticket sales, users value frequency over deduplication. Implementing an "interleaved" loop that visits priority items (active openings) twice as often, combined with reduced throttles, meets user needs for real-time responsiveness without overloading the server for inactive segments.
+**Action:** Design monitoring loops to dynamically adjust frequency based on item state (e.g. priority queue or interleaving).
