@@ -26,12 +26,13 @@ function now() {
   return new Date().toLocaleTimeString();
 }
 
+// Optimized: Initializing lastRequestTime to allow immediate first request
 let lastRequestTime = 0;
 let requestThrottleMs = 10000; // Default to 10 seconds
 
 async function throttledFetch(url) {
-  const now = Date.now();
-  const timeSinceLastRequest = now - lastRequestTime;
+  const currentTime = Date.now();
+  const timeSinceLastRequest = currentTime - lastRequestTime;
   const delayNeeded = Math.max(0, requestThrottleMs - timeSinceLastRequest);
 
   if (delayNeeded > 0) {
@@ -48,11 +49,15 @@ async function melonSendDiscord(message) {
     return;
   }
   const tag = (DISCORD_CONFIG.userId && DISCORD_CONFIG.userId !== "your_discord_user_id") ? `<@${DISCORD_CONFIG.userId}>` : '';
-  await fetch(DISCORD_CONFIG.webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: `${tag} ${message}` })
-  });
+  try {
+    await fetch(DISCORD_CONFIG.webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: `${tag} ${message}` })
+    });
+  } catch (e) {
+    console.error(`[${now()}] ❌ Failed to send Discord notification`, e);
+  }
 }
 
 
@@ -69,20 +74,27 @@ async function melonGetBlockList() {
     `&scheduleNo=${MELON_CONFIG.scheduleNo}` +
     `&pocCode=${MELON_CONFIG.pocCode}`;
 
-  const response = await throttledFetch(url);
-  const text = await response.text();
+  try {
+    const response = await throttledFetch(url);
+    const text = await response.text();
 
-  const json = JSON.parse(
-    text
-      .replace("/**/getBlockGradeSeatMapCallBack(", "")
-      .replace(");", "")
-  );
+    const json = JSON.parse(
+      text
+        .replace("/**/getBlockGradeSeatMapCallBack(", "")
+        .replace(");", "")
+    );
 
-  const blocks = json?.seatData?.da?.sb || [];
-
-  console.log(`[${now()}] ✅ Loaded ${blocks.length} blocks.`);
-  return blocks;
+    const blocks = json?.seatData?.da?.sb || [];
+    console.log(`[${now()}] ✅ Loaded ${blocks.length} blocks.`);
+    return blocks;
+  } catch (e) {
+    console.error(`[${now()}] ❌ Failed to fetch block list`, e);
+    return [];
+  }
 }
+
+// Optimized: Cache to prevent redundant notifications for the same seat count
+const seatCache = new Map();
 
 async function melonCheckSingleBlock(block) {
   const zone = block.sntv?.a || "UNKNOWN";
@@ -111,15 +123,34 @@ async function melonCheckSingleBlock(block) {
         .replace(");", "")
     );
 
-    const seats = json?.seatData?.st?.[0]?.ss?.filter(s => s.sid !== null) || [];
-    const count = seats.length;
+    // Optimized: Count seats without creating a temporary filtered array (efficient for large seat maps)
+    let count = 0;
+    const ss = json?.seatData?.st?.[0]?.ss;
+    if (ss) {
+      for (let i = 0; i < ss.length; i++) {
+        if (ss[i].sid !== null) count++;
+      }
+    }
+
+    const lastCount = seatCache.get(blockId);
 
     if (count > 0) {
-      console.log(`[${now()}] 🎫 FOUND ${count} seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
-      await melonSendDiscord(`🎫 **${count} seats available**\nFloor ${floor} | ${zone} (${blockId})`);
+      // Optimized: Only notify if the seat count has changed to avoid spamming
+      if (count !== lastCount) {
+        console.log(`[${now()}] 🎫 FOUND ${count} seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
+        await melonSendDiscord(`🎫 **${count} seats available**\nFloor ${floor} | ${zone} (${blockId})`);
+      } else {
+        console.log(`[${now()}] 🎫 Seats still available (${count}) in Floor ${floor} | ${zone} (sbid=${blockId})`);
+      }
     } else {
-      console.log(`[${now()}] ⬚ No seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
+      if (lastCount > 0) {
+        console.log(`[${now()}] ⬚ Seats are now GONE in Floor ${floor} | ${zone} (sbid=${blockId})`);
+      } else {
+        console.log(`[${now()}] ⬚ No seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
+      }
     }
+
+    seatCache.set(blockId, count);
 
   } catch (e) {
     console.error(`[${now()}] ❌ Failed checking Floor ${floor} | ${zone} (sbid=${blockId})`, e);
@@ -183,11 +214,22 @@ async function startMelonMonitor() {
   console.log(`🔁 Starting staggered monitor: ${blocks.length} blocks in 15 minutes (${Math.round(requestIntervalMs / 1000)}s per block)`);
   console.log(`⏱️ Request throttle: ${requestThrottleMs / 1000}s between requests`);
 
+  // Optimized: Initializing lastRequestTime to allow immediate first request
+  lastRequestTime = Date.now() - requestThrottleMs;
+
   while (true) {
     const block = blocks[blockIndex];
     await melonCheckSingleBlock(block);
 
     blockIndex = (blockIndex + 1) % blocks.length;
+
+    // Optimized: Refresh block list after every full loop to catch venue changes
+    if (blockIndex === 0) {
+      const refreshedBlocks = await melonGetBlockList();
+      if (refreshedBlocks.length > 0) {
+        blocks = sortBlocks(refreshedBlocks);
+      }
+    }
   }
 }
 
