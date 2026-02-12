@@ -13,6 +13,9 @@ slack_webhook_url = ""
 #######################################################
 #######################################################
 
+# Use a session for connection pooling (Bolt ⚡ optimization)
+session = requests.Session()
+
 header = {
     'Accept': 'text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01',
     'Content-Length': '75',
@@ -32,7 +35,7 @@ def get_block_list() -> list:
         'scheduleNo': scheduleNo
     }
     
-    response = requests.post(url,headers=header,data=body)
+    response = session.post(url,headers=header,data=body)
     block_datas = json.loads(response.text.replace("/**/getBlockGradeSeatMapCallBack(","").replace(");", "")) 
             
     return block_datas['seatData']['da']['sb']
@@ -49,7 +52,7 @@ def get_remain_seat_in_block(block) -> int:
         'corpCodeNo': ''
     }
 
-    response = requests.post(url,headers=header,data=body)
+    response = session.post(url,headers=header,data=body)
     map_datas = json.loads(response.text.replace("/**/getSeatListCallBack(","").replace(");", ""))
     count = 0
     
@@ -61,11 +64,13 @@ def get_remain_seat_in_block(block) -> int:
     return count
 
 def send_message(message: str) -> None:
-    response = requests.post(slack_webhook_url, json={'text' : message})
+    response = session.post(slack_webhook_url, json={'text' : message})
 
 def main() -> None:
+    # Bolt ⚡: Fetch block list once outside the loop to reduce redundant requests
+    blocks = get_block_list()
+
     for i in range(30):
-        blocks = get_block_list()
         for block in blocks:
             count = get_remain_seat_in_block(block)
             if count > 0:

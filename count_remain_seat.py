@@ -12,6 +12,9 @@ slack_webhook_url = ""
 #######################################################
 #######################################################
 
+# Use a session for connection pooling (Bolt ⚡ optimization)
+session = requests.Session()
+
 def main() -> None:
     for i in range(30):
         seats = get_seats_summary()
@@ -38,7 +41,7 @@ def get_seats_summary() -> None:
         'User-Agent': 'X'
     }
 
-    response = requests.post(url,headers=header,data=body)
+    response = session.post(url,headers=header,data=body)
     return response.json()
 
 def check_remaining_seats(seats: list) -> list:
@@ -52,7 +55,7 @@ def check_remaining_seats(seats: list) -> list:
 
 def send_message(messages: list) -> None:
     for message in messages:
-        response = requests.post(slack_webhook_url, json={'text' : message})
+        response = session.post(slack_webhook_url, json={'text' : message})
    
 def generate_message(seat: dict) -> str: 
     message = ""
