@@ -12,47 +12,53 @@ slack_webhook_url = ""
 #######################################################
 #######################################################
 
+melon_session = requests.Session()
+melon_session.headers.update({
+    'Accept': 'text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01',
+    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+    'Cookie': cookie,
+    'Host': 'ticket.melon.com',
+    'Referer': 'https://ticket.melon.com/reservation/popup/stepBlock.htm',
+    'User-Agent': 'X'
+})
+
+
 def main() -> None:
     for i in range(30):
         seats = get_seats_summary()
         messages = check_remaining_seats(seats['summary'])
         send_message(messages)
         time.sleep(2)
-        
-def get_seats_summary() -> None:
-    url = "https://ticket.melon.com/tktapi/product/summary.json?v=1" 
-   
+
+
+def get_seats_summary() -> dict:
+    url = "https://ticket.melon.com/tktapi/product/summary.json?v=1"
+
     body = {
         'prodId': prodId,
         'pocCode': pocCode,
         'scheduleNo': scheduleNo
     }
 
-    header = {
-        'Accept': 'text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01',
-        'Content-Length': '76',
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'Cookie': cookie,
-        'Host': 'ticket.melon.com',
-        'Referer': 'https://ticket.melon.com/reservation/popup/stepBlock.htm',
-        'User-Agent': 'X'
-    }
-
-    response = requests.post(url,headers=header,data=body)
+    # Use melon_session for connection pooling to Melon Ticket API
+    response = melon_session.post(url, data=body)
     return response.json()
+
 
 def check_remaining_seats(seats: list) -> list:
     result = []
-    
+
     for seat in seats:
         if seat['realSeatCntlk'] > 0:
             result.append(generate_message(seat))
 
     return result
 
+
 def send_message(messages: list) -> None:
     for message in messages:
-        response = requests.post(slack_webhook_url, json={'text' : message})
+        # Do NOT use melon_session for Slack to avoid leaking headers/cookies and causing Host header conflicts
+        requests.post(slack_webhook_url, json={'text': message})
    
 def generate_message(seat: dict) -> str: 
     message = ""
@@ -64,4 +70,6 @@ def generate_message(seat: dict) -> str:
     message += "에 잔여좌석 " + str(seat['realSeatCntlk']) + "개 발생! "
     return message
 
-main()
+
+if __name__ == "__main__":
+    main()
