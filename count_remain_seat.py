@@ -12,14 +12,17 @@ slack_webhook_url = ""
 #######################################################
 #######################################################
 
-def main() -> None:
-    for i in range(30):
-        seats = get_seats_summary()
-        messages = check_remaining_seats(seats['summary'])
-        send_message(messages)
-        time.sleep(2)
-        
-def get_seats_summary() -> None:
+# Bolt: Hoisted headers for reuse and clarity.
+MELON_HEADERS = {
+    'Accept': 'text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01',
+    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+    'Cookie': cookie,
+    'Host': 'ticket.melon.com',
+    'Referer': 'https://ticket.melon.com/reservation/popup/stepBlock.htm',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+}
+
+def get_seats_summary(session: requests.Session) -> dict:
     url = "https://ticket.melon.com/tktapi/product/summary.json?v=1" 
    
     body = {
@@ -28,40 +31,63 @@ def get_seats_summary() -> None:
         'scheduleNo': scheduleNo
     }
 
-    header = {
-        'Accept': 'text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01',
-        'Content-Length': '76',
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'Cookie': cookie,
-        'Host': 'ticket.melon.com',
-        'Referer': 'https://ticket.melon.com/reservation/popup/stepBlock.htm',
-        'User-Agent': 'X'
-    }
-
-    response = requests.post(url,headers=header,data=body)
+    # Bolt: Reusing session for connection pooling
+    response = session.post(url, headers=MELON_HEADERS, data=body)
     return response.json()
 
 def check_remaining_seats(seats: list) -> list:
     result = []
     
     for seat in seats:
-        if seat['realSeatCntlk'] > 0:
+        if seat.get('realSeatCntlk', 0) > 0:
             result.append(generate_message(seat))
 
     return result
 
 def send_message(messages: list) -> None:
+    if not slack_webhook_url:
+        if messages:
+            print(f"Slack URL not set. Messages: {messages}")
+        return
+
     for message in messages:
-        response = requests.post(slack_webhook_url, json={'text' : message})
+        try:
+            # Bolt: Use a direct post to avoid session header pollution
+            requests.post(slack_webhook_url, json={'text' : message}, timeout=5)
+        except Exception as e:
+            print(f"Failed to send Slack message: {e}")
    
 def generate_message(seat: dict) -> str: 
-    message = ""
-    message += seat['seatGradeName'] + ", " if 'seatGradeName' in seat else ""
-    message += seat['floorNo'] if 'floorNo' in seat else ""
-    message += seat['floorName'] +  " " if 'floorName' in seat else ""
-    message += seat['areaNo'] if 'areaNo' in seat else ""
-    message += seat['areaName'] if 'areaName' in seat else ""
-    message += "에 잔여좌석 " + str(seat['realSeatCntlk']) + "개 발생! "
+    message_parts = []
+    if 'seatGradeName' in seat:
+        message_parts.append(seat['seatGradeName'] + ",")
+    if 'floorNo' in seat:
+        message_parts.append(seat['floorNo'])
+    if 'floorName' in seat:
+        message_parts.append(seat['floorName'])
+    if 'areaNo' in seat:
+        message_parts.append(seat['areaNo'])
+    if 'areaName' in seat:
+        message_parts.append(seat['areaName'])
+
+    message = " ".join(message_parts)
+    message += f"에 잔여좌석 {seat['realSeatCntlk']}개 발생! "
     return message
 
-main()
+def main() -> None:
+    # Bolt: Use requests.Session to maintain connections between iterations
+    with requests.Session() as session:
+        for i in range(30):
+            try:
+                seats = get_seats_summary(session)
+                if 'summary' in seats:
+                    messages = check_remaining_seats(seats['summary'])
+                    send_message(messages)
+            except Exception as e:
+                print(f"Error in iteration {i+1}: {e}")
+
+            if i < 29:
+                time.sleep(2)
+
+if __name__ == "__main__":
+    main()
