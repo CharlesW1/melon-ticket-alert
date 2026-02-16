@@ -70,13 +70,13 @@ clearInterval(melonMonitorInterval)
 
 ---
 
-# OLD - Before Fork (ticket.melon.com)
+# OLD - Before Fork (ticket.melon.com) - DEPRECATED
 
-The sections below are from the original repository and are for the Korean domestic site (`ticket.melon.com`). The Python scripts may not work on the global site due to anti-bot protection.
+The sections below are from the original repository and are for the Korean domestic site (`ticket.melon.com`). The Python scripts have been moved to the `deprecated/` directory and may not work on the global site due to anti-bot protection.
 
 ---
 
-# Melon 티켓 자동 알림 스크립트
+# Melon 티켓 자동 알림 스크립트 (DEPRECATED)
 
 Python으로 멜론 콘서트 자리 발생시 자동으로 알림을 받습니다.
 
@@ -87,7 +87,7 @@ Python으로 멜론 콘서트 자리 발생시 자동으로 알림을 받습니�
 # 사용법 (MacOS 기준)
 ## 멜론에서 남은 좌석 정보를 제공할 경우
 
-1. `count_remain_seat.py`에 알림을 받고자하는 콘서트 API 정보를 입력합니다. 괄호 표시된 부분만 확인해서 변경해주세요.
+1. `deprecated/count_remain_seat.py`에 알림을 받고자하는 콘서트 API 정보를 입력합니다. 괄호 표시된 부분만 확인해서 변경해주세요.
 ```python
 ...
 
@@ -144,12 +144,12 @@ $ pip install -r requirements.txt
 $ crontab -e
 # <python path>에는 실제 Python 경로를 입력해주세요. 전체 경로를 입력해야합니다.
 # <main.py path>에는 main.py의 전체 경로를 입력해주세요.
-* * * * * <python path>/python3 <count_remain_seat.py path>/count_remain_seat.py
+* * * * * <python path>/python3 <count_remain_seat.py path>/deprecated/count_remain_seat.py
 ```
  
 ## 멜론에서 남은 좌석 정보를 제공하지 않을 경우
 
-1. `check_map_seat.py`에 알림을 받고자하는 콘서트 API 정보를 입력합니다. 최상단에 주석으로 표시된 부분만 확인해서 변경해주세요.
+1. `deprecated/check_map_seat.py`에 알림을 받고자하는 콘서트 API 정보를 입력합니다. 최상단에 주석으로 표시된 부분만 확인해서 변경해주세요.
 ```python
 ...
 
@@ -182,5 +182,5 @@ $ pip install -r requirements.txt
 $ crontab -e
 # <python path>에는 실제 Python 경로를 입력해주세요. 전체 경로를 입력해야합니다.
 # <main.py path>에는 main.py의 전체 경로를 입력해주세요.
-* * * * * <python path>/python3 <check_map_seat.py path>/check_map_seat.py
+* * * * * <python path>/python3 <check_map_seat.py path>/deprecated/check_map_seat.py
 ```

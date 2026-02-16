@@ -55,8 +55,8 @@ def get_remain_seat_in_block(block) -> int:
     
     if "seatData" in map_datas:
         for st in map_datas['seatData']['st'][0]['ss']:
-            if st['sid'] != None: 
-                count += 1    
+            if st['sid'] != None:
+                count += 1
     
     return count
 
