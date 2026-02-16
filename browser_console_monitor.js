@@ -7,7 +7,8 @@ const MELON_CONFIG = {
   prodId: "212638",
   scheduleNo: "100001",
   pocCode: "SC0002",
-  checkInterval: 15 * 60 * 1000      // 15 minutes for one complete loop
+  checkInterval: 15 * 60 * 1000,      // 15 minutes for one complete loop
+  priorityFrequency: 3               // Every 3rd request is a priority check
 };
 
 const DISCORD_CONFIG = {
@@ -190,6 +191,7 @@ function logSortedBlocks(blocks) {
 let blocks = [];
 let blockIndex = 0;
 let priorityBlockIndex = 0;
+let globalRequestCount = 0;
 
 async function startMelonMonitor() {
   if (!DISCORD_CONFIG.webhookUrl || DISCORD_CONFIG.webhookUrl === "your_discord_webhook_url") {
@@ -218,22 +220,27 @@ async function startMelonMonitor() {
   lastRequestTime = Date.now() - requestThrottleMs;
 
   while (true) {
-    // Check one normal block
-    const block = blocks[blockIndex];
-    await melonCheckSingleBlock(block);
-    blockIndex = (blockIndex + 1) % blocks.length;
+    globalRequestCount++;
 
-    // Interleave priority blocks (those with seats) to double their check frequency
+    // Find blocks that currently have seats (priority)
     const priorityBlocks = blocks.filter(b => (seatCache.get(b.sbid) || 0) > 0);
 
-    if (priorityBlocks.length > 0) {
-      // Ensure priorityBlockIndex is in bounds if the list of priority blocks shrunk
+    // Determine if we should do a priority check
+    // Priority check happens every priorityFrequency requests if priority blocks exist
+    const shouldDoPriorityCheck = priorityBlocks.length > 0 && (globalRequestCount % MELON_CONFIG.priorityFrequency === 0);
+
+    if (shouldDoPriorityCheck) {
       if (priorityBlockIndex >= priorityBlocks.length) {
         priorityBlockIndex = 0;
       }
 
-      await melonCheckSingleBlock(priorityBlocks[priorityBlockIndex]);
+      const block = priorityBlocks[priorityBlockIndex];
+      await melonCheckSingleBlock(block);
       priorityBlockIndex = (priorityBlockIndex + 1) % priorityBlocks.length;
+    } else {
+      const block = blocks[blockIndex];
+      await melonCheckSingleBlock(block);
+      blockIndex = (blockIndex + 1) % blocks.length;
     }
   }
 }

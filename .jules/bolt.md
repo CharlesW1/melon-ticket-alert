@@ -14,3 +14,7 @@
 ## 2026-02-16 - Safety in Dynamic Priority Loops
 **Learning:** When using a priority queue or interleaved list that is dynamically recalculated (e.g. via .filter()), always ensure that any tracking indices (like priorityBlockIndex) are bounds-checked or reset if the list shrinks. Failure to do so leads to TypeErrors when accessing out-of-bounds elements.
 **Action:** Use modulo or explicit bounds checking when iterating over dynamically filtered lists.
+
+## 2026-02-16 - Frequency-Based Priority Polling
+**Learning:** For monitoring systems where some targets are more "active" than others, a simple interleaved loop using a frequency multiplier (e.g., check priority every 3rd request) is more configurable and predictable than complex priority queues. It allows users to tune the "extra" load they put on the system for priority targets.
+**Action:** Use a modulo-based request counter to interleave priority checks at a fixed ratio.
