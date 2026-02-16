@@ -18,3 +18,7 @@
 ## 2026-02-16 - Frequency-Based Priority Polling
 **Learning:** For monitoring systems where some targets are more "active" than others, a simple interleaved loop using a frequency multiplier (e.g., check priority every 3rd request) is more configurable and predictable than complex priority queues. It allows users to tune the "extra" load they put on the system for priority targets.
 **Action:** Use a modulo-based request counter to interleave priority checks at a fixed ratio.
+
+## 2026-02-16 - Timestamp-Based Priority Scheduling
+**Learning:** For dynamic priority monitoring (where items enter and leave the priority set), an index-based rotation is fragile. Storing and selecting the "oldest" last-checked timestamp ensures a fair and robust rotation that handles additions and removals from the priority set without skipping or duplicating items.
+**Action:** Use timestamps to manage rotation in dynamic polling sets.

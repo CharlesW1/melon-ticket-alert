@@ -96,6 +96,7 @@ async function melonGetBlockList() {
   }
 }
 
+// seatCache maps blockId -> lastCheckedTimestamp
 const seatCache = new Map();
 
 async function melonCheckSingleBlock(block) {
@@ -103,7 +104,7 @@ async function melonCheckSingleBlock(block) {
   const floor = block.sntv?.f || "UNKNOWN";
   const blockId = block.sbid;
 
-  const hasSeatsPreviously = seatCache.get(blockId) > 0;
+  const hasSeatsPreviously = seatCache.has(blockId);
   // Use halved throttle for high-frequency checks if seats were previously found
   const throttleOverride = hasSeatsPreviously ? Math.max(requestThrottleMs / 2, 5000) : null;
 
@@ -141,15 +142,18 @@ async function melonCheckSingleBlock(block) {
     if (count > 0) {
       console.log(`[${now()}] 🎫 FOUND ${count} seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
       await melonSendDiscord(`🎫 **${count} seats available**\nFloor ${floor} | ${zone} (${blockId})`);
+      // Update last checked time
+      seatCache.set(blockId, Date.now());
     } else {
       if (hasSeatsPreviously) {
         console.log(`[${now()}] ⬚ Seats are now GONE in Floor ${floor} | ${zone} (sbid=${blockId})`);
+        // Remove from priority cache if count is 0
+        seatCache.delete(blockId);
       } else {
         console.log(`[${now()}] ⬚ No seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
       }
     }
 
-    seatCache.set(blockId, count);
     return count;
 
   } catch (e) {
@@ -190,7 +194,6 @@ function logSortedBlocks(blocks) {
 
 let blocks = [];
 let blockIndex = 0;
-let priorityBlockIndex = 0;
 let globalRequestCount = 0;
 
 async function startMelonMonitor() {
@@ -222,21 +225,28 @@ async function startMelonMonitor() {
   while (true) {
     globalRequestCount++;
 
-    // Find blocks that currently have seats (priority)
-    const priorityBlocks = blocks.filter(b => (seatCache.get(b.sbid) || 0) > 0);
-
     // Determine if we should do a priority check
-    // Priority check happens every priorityFrequency requests if priority blocks exist
-    const shouldDoPriorityCheck = priorityBlocks.length > 0 && (globalRequestCount % MELON_CONFIG.priorityFrequency === 0);
+    const shouldDoPriorityCheck = seatCache.size > 0 && (globalRequestCount % MELON_CONFIG.priorityFrequency === 0);
 
     if (shouldDoPriorityCheck) {
-      if (priorityBlockIndex >= priorityBlocks.length) {
-        priorityBlockIndex = 0;
+      // Find the block with the earliest lastCheckedTimestamp
+      let earliestTime = Infinity;
+      let priorityBlockId = null;
+
+      for (const [sbid, timestamp] of seatCache.entries()) {
+        if (timestamp < earliestTime) {
+          earliestTime = timestamp;
+          priorityBlockId = sbid;
+        }
       }
 
-      const block = priorityBlocks[priorityBlockIndex];
-      await melonCheckSingleBlock(block);
-      priorityBlockIndex = (priorityBlockIndex + 1) % priorityBlocks.length;
+      const block = blocks.find(b => b.sbid === priorityBlockId);
+      if (block) {
+        await melonCheckSingleBlock(block);
+      } else {
+        // Should not happen if data is consistent, but clean up just in case
+        seatCache.delete(priorityBlockId);
+      }
     } else {
       const block = blocks[blockIndex];
       await melonCheckSingleBlock(block);
