@@ -26,7 +26,6 @@ function now() {
   return new Date().toLocaleTimeString();
 }
 
-// Optimized: Initializing lastRequestTime to allow immediate first request
 let lastRequestTime = 0;
 let requestThrottleMs = 10000; // Default to 10 seconds
 
@@ -96,7 +95,6 @@ async function melonGetBlockList() {
   }
 }
 
-// Optimized: Store seat counts to track priority blocks
 const seatCache = new Map();
 
 async function melonCheckSingleBlock(block) {
@@ -131,7 +129,6 @@ async function melonCheckSingleBlock(block) {
         .replace(");", "")
     );
 
-    // Optimized: Count seats without creating a temporary filtered array
     let count = 0;
     const ss = json?.seatData?.st?.[0]?.ss;
     if (ss) {
@@ -141,7 +138,6 @@ async function melonCheckSingleBlock(block) {
     }
 
     if (count > 0) {
-      // Reverted: Repeated notifications enabled as requested by user for time-sensitivity
       console.log(`[${now()}] 🎫 FOUND ${count} seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
       await melonSendDiscord(`🎫 **${count} seats available**\nFloor ${floor} | ${zone} (${blockId})`);
     } else {
@@ -219,26 +215,26 @@ async function startMelonMonitor() {
   console.log(`🔁 Starting staggered monitor: ${blocks.length} blocks in 15 minutes (${Math.round(requestIntervalMs / 1000)}s per block)`);
   console.log(`⏱️ Request throttle: ${requestThrottleMs / 1000}s between requests`);
 
-  // Optimized: Initializing lastRequestTime to allow immediate first request
   lastRequestTime = Date.now() - requestThrottleMs;
 
   while (true) {
+    // Check one normal block
+    const block = blocks[blockIndex];
+    await melonCheckSingleBlock(block);
+    blockIndex = (blockIndex + 1) % blocks.length;
+
     // Interleave priority blocks (those with seats) to double their check frequency
-    const priorityBlocks = blocks.filter(b => seatCache.get(b.sbid) > 0);
+    const priorityBlocks = blocks.filter(b => (seatCache.get(b.sbid) || 0) > 0);
 
     if (priorityBlocks.length > 0) {
-      // Check one normal block
-      await melonCheckSingleBlock(blocks[blockIndex]);
-      blockIndex = (blockIndex + 1) % blocks.length;
+      // Ensure priorityBlockIndex is in bounds if the list of priority blocks shrunk
+      if (priorityBlockIndex >= priorityBlocks.length) {
+        priorityBlockIndex = 0;
+      }
 
-      // Then check one priority block (interleaving)
       await melonCheckSingleBlock(priorityBlocks[priorityBlockIndex]);
       priorityBlockIndex = (priorityBlockIndex + 1) % priorityBlocks.length;
-    } else {
-      await melonCheckSingleBlock(blocks[blockIndex]);
-      blockIndex = (blockIndex + 1) % blocks.length;
     }
-
   }
 }
 
