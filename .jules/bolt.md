@@ -22,7 +22,3 @@
 ## 2026-02-16 - Timestamp-Based Priority Scheduling
 **Learning:** For dynamic priority monitoring (where items enter and leave the priority set), an index-based rotation is fragile. Storing and selecting the "oldest" last-checked timestamp ensures a fair and robust rotation that handles additions and removals from the priority set without skipping or duplicating items.
 **Action:** Use timestamps to manage rotation in dynamic polling sets.
-
-## 2026-05-22 - O(1) Priority Rotation using Map Insertion Order
-**Learning:** While timestamp-based scheduling is robust, finding the "oldest" entry in a large priority set is O(M). In JavaScript, Map objects preserve insertion order. By deleting and re-inserting a key whenever it is checked, the least-recently checked item is always the first entry in the Map, accessible in O(1) via `map.keys().next().value`.
-**Action:** Leverage Map insertion order for efficient, fair rotation of priority items.
