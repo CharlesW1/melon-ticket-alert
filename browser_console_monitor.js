@@ -81,11 +81,10 @@ async function melonGetBlockList() {
     const response = await throttledFetch(url);
     const text = await response.text();
 
-    const json = JSON.parse(
-      text
-        .replace("/**/getBlockGradeSeatMapCallBack(", "")
-        .replace(");", "")
-    );
+    // Optimized: Use slice instead of multiple replaces for better performance and robustness
+    const startIdx = text.indexOf('(') + 1;
+    const endIdx = text.lastIndexOf(')');
+    const json = JSON.parse(text.slice(startIdx, endIdx));
 
     const blocks = json?.seatData?.da?.sb || [];
     console.log(`[${now()}] ✅ Loaded ${blocks.length} blocks.`);
@@ -125,11 +124,10 @@ async function melonCheckSingleBlock(block) {
     const response = await throttledFetch(url, throttleOverride);
     const text = await response.text();
 
-    const json = JSON.parse(
-      text
-        .replace("/**/getSeatListCallBack(", "")
-        .replace(");", "")
-    );
+    // Optimized: Use slice instead of multiple replaces for better performance and robustness
+    const startIdx = text.indexOf('(') + 1;
+    const endIdx = text.lastIndexOf(')');
+    const json = JSON.parse(text.slice(startIdx, endIdx));
 
     let count = 0;
     const ss = json?.seatData?.st?.[0]?.ss;
@@ -142,7 +140,9 @@ async function melonCheckSingleBlock(block) {
     if (count > 0) {
       console.log(`[${now()}] 🎫 FOUND ${count} seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
       await melonSendDiscord(`🎫 **${count} seats available**\nFloor ${floor} | ${zone} (${blockId})`);
-      // Update last checked time
+
+      // Optimized: Update last checked time AND move to end of Map insertion order for O(1) rotation
+      seatCache.delete(blockId);
       seatCache.set(blockId, Date.now());
     } else {
       if (hasSeatsPreviously) {
@@ -193,6 +193,7 @@ function logSortedBlocks(blocks) {
 /**************** MONITOR LOOP ****************/
 
 let blocks = [];
+let blocksMap = new Map(); // Optimized: Map for O(1) lookup of blocks by sbid
 let blockIndex = 0;
 let globalRequestCount = 0;
 
@@ -210,6 +211,10 @@ async function startMelonMonitor() {
 
   // 🔁 Sort blocks by floor, then alphabetically
   blocks = sortBlocks(blocks);
+
+  // Optimized: Build map for O(1) lookups
+  blocksMap = new Map();
+  blocks.forEach(b => blocksMap.set(b.sbid, b));
 
   // 🧾 Log the sorted list in table form
   logSortedBlocks(blocks);
@@ -229,18 +234,10 @@ async function startMelonMonitor() {
     const shouldDoPriorityCheck = seatCache.size > 0 && (globalRequestCount % MELON_CONFIG.priorityFrequency === 0);
 
     if (shouldDoPriorityCheck) {
-      // Find the block with the earliest lastCheckedTimestamp
-      let earliestTime = Infinity;
-      let priorityBlockId = null;
+      // Optimized: Leverage Map insertion order to find the least-recently checked block in O(1)
+      const priorityBlockId = seatCache.keys().next().value;
+      const block = blocksMap.get(priorityBlockId);
 
-      for (const [sbid, timestamp] of seatCache.entries()) {
-        if (timestamp < earliestTime) {
-          earliestTime = timestamp;
-          priorityBlockId = sbid;
-        }
-      }
-
-      const block = blocks.find(b => b.sbid === priorityBlockId);
       if (block) {
         await melonCheckSingleBlock(block);
       } else {
