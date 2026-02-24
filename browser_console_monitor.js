@@ -166,15 +166,23 @@ async function melonCheckSingleBlock(block) {
 
 function sortBlocks(blocks) {
   return blocks.sort((a, b) => {
-    const floorA = Number(a.sntv?.f ?? -1);
-    const floorB = Number(b.sntv?.f ?? -1);
+    const rawFloorA = Number(a.sntv?.f);
+    const rawFloorB = Number(b.sntv?.f);
+
+    const floorA = Number.isFinite(rawFloorA) ? rawFloorA : -1;
+    const floorB = Number.isFinite(rawFloorB) ? rawFloorB : -1;
+
     if (floorA !== floorB) return floorA - floorB;
 
-    const zoneA = (a.sntv?.a || "").toUpperCase();
-    const zoneB = (b.sntv?.a || "").toUpperCase();
+    const zoneA = (a.sntv?.a ?? "").toString().toUpperCase();
+    const zoneB = (b.sntv?.a ?? "").toString().toUpperCase();
     if (zoneA !== zoneB) return zoneA.localeCompare(zoneB);
 
-    return a.sbid - b.sbid;
+    const idA = Number(a.sbid);
+    const idB = Number(b.sbid);
+
+    return (Number.isFinite(idA) ? idA : 0) -
+           (Number.isFinite(idB) ? idB : 0);
   });
 }
 
