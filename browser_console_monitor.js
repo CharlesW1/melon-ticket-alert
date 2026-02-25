@@ -46,17 +46,20 @@ async function throttledFetch(url, throttleOverrideMs = null) {
   return fetch(url);
 }
 
+// Pre-calculate Discord mention tag and config status
+const isDiscordConfigured = DISCORD_CONFIG.webhookUrl && DISCORD_CONFIG.webhookUrl !== "your_discord_webhook_url";
+const discordMentionTag = (isDiscordConfigured && DISCORD_CONFIG.userId && DISCORD_CONFIG.userId !== "your_discord_user_id") ? `<@${DISCORD_CONFIG.userId}>` : '';
+
 async function melonSendDiscord(message) {
-  if (!DISCORD_CONFIG.webhookUrl || DISCORD_CONFIG.webhookUrl === "your_discord_webhook_url") {
+  if (!isDiscordConfigured) {
     console.log('Discord webhook not configured, skipping notification');
     return;
   }
-  const tag = (DISCORD_CONFIG.userId && DISCORD_CONFIG.userId !== "your_discord_user_id") ? `<@${DISCORD_CONFIG.userId}>` : '';
   try {
     await fetch(DISCORD_CONFIG.webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: `${tag} ${message}` })
+      body: JSON.stringify({ content: `${discordMentionTag} ${message}` })
     });
   } catch (e) {
     console.error(`[${now()}] ❌ Failed to send Discord notification`, e);
@@ -86,8 +89,25 @@ async function melonGetBlockList() {
     const endIdx = text.lastIndexOf(')');
     const json = JSON.parse(text.slice(startIdx, endIdx));
 
-    const blocks = json?.seatData?.da?.sb || [];
-    console.log(`[${now()}] ✅ Loaded ${blocks.length} blocks.`);
+    const rawBlocks = json?.seatData?.da?.sb || [];
+
+    // Optimized: Pre-process block data to avoid repeated calculations in the monitor loop
+    const blocks = rawBlocks.map(block => ({
+      ...block,
+      zone: block.sntv?.a || "UNKNOWN",
+      floor: block.sntv?.f || "UNKNOWN",
+      // Pre-construct the URL once to avoid template literal overhead in high-frequency checks
+      seatMapUrl: `https://tkglobal.melon.com/tktapi/product/seat/seatMapList.json` +
+        `?callback=getSeatListCallBack` +
+        `&v=1` +
+        `&prodId=${MELON_CONFIG.prodId}` +
+        `&scheduleNo=${MELON_CONFIG.scheduleNo}` +
+        `&blockId=${block.sbid}` +
+        `&pocCode=${MELON_CONFIG.pocCode}` +
+        `&corpCodeNo=`
+    }));
+
+    console.log(`[${now()}] ✅ Loaded and pre-processed ${blocks.length} blocks.`);
     return blocks;
   } catch (e) {
     console.error(`[${now()}] ❌ Failed to fetch block list`, e);
@@ -99,30 +119,32 @@ async function melonGetBlockList() {
 const seatCache = new Map();
 
 async function melonCheckSingleBlock(block) {
-  const zone = block.sntv?.a || "UNKNOWN";
-  const floor = block.sntv?.f || "UNKNOWN";
-  const blockId = block.sbid;
+  // Optimized: Use pre-processed properties
+  const { zone, floor, sbid: blockId, seatMapUrl } = block;
 
   const hasSeatsPreviously = seatCache.has(blockId);
   // Use halved throttle for high-frequency checks if seats were previously found
   const throttleOverride = hasSeatsPreviously ? Math.max(requestThrottleMs / 2, 5000) : null;
 
-  const url =
-    `https://tkglobal.melon.com/tktapi/product/seat/seatMapList.json` +
-    `?callback=getSeatListCallBack` +
-    `&v=1` +
-    `&prodId=${MELON_CONFIG.prodId}` +
-    `&scheduleNo=${MELON_CONFIG.scheduleNo}` +
-    `&blockId=${blockId}` +
-    `&pocCode=${MELON_CONFIG.pocCode}` +
-    `&corpCodeNo=`;
-
   const priorityLabel = hasSeatsPreviously ? "[PRIORITY] " : "";
   console.log(`[${now()}] ${priorityLabel}🔎 Checking block: Floor ${floor} | ${zone} | sbid=${blockId}`);
 
   try {
-    const response = await throttledFetch(url, throttleOverride);
+    const response = await throttledFetch(seatMapUrl, throttleOverride);
     const text = await response.text();
+
+    // Performance Optimization: Fast-path for empty blocks.
+    // Most blocks are empty. Checking the raw text for the existence of an ID
+    // is significantly faster than slicing, parsing, and iterating over a large JSON.
+    if (!text.includes('"sid":"')) {
+      if (hasSeatsPreviously) {
+        console.log(`[${now()}] ⬚ Seats are now GONE in Floor ${floor} | ${zone} (sbid=${blockId})`);
+        seatCache.delete(blockId);
+      } else {
+        console.log(`[${now()}] ⬚ No seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
+      }
+      return 0;
+    }
 
     // Optimized: Use slice instead of multiple replaces for better performance and robustness
     const startIdx = text.indexOf('(') + 1;
@@ -130,10 +152,16 @@ async function melonCheckSingleBlock(block) {
     const json = JSON.parse(text.slice(startIdx, endIdx));
 
     let count = 0;
-    const ss = json?.seatData?.st?.[0]?.ss;
-    if (ss) {
-      for (let i = 0; i < ss.length; i++) {
-        if (ss[i].sid !== null) count++;
+    const st = json?.seatData?.st;
+    if (st) {
+      // Optimized & Fixed: Check all seat grades (st) and avoid unnecessary property lookups in inner loop
+      for (let i = 0, lenI = st.length; i < lenI; i++) {
+        const ss = st[i].ss;
+        if (ss) {
+          for (let j = 0, lenJ = ss.length; j < lenJ; j++) {
+            if (ss[j].sid !== null) count++;
+          }
+        }
       }
     }
 
@@ -143,14 +171,10 @@ async function melonCheckSingleBlock(block) {
 
       // Update last checked time
       seatCache.set(blockId, Date.now());
-    } else {
-      if (hasSeatsPreviously) {
-        console.log(`[${now()}] ⬚ Seats are now GONE in Floor ${floor} | ${zone} (sbid=${blockId})`);
-        // Remove from priority cache if count is 0
-        seatCache.delete(blockId);
-      } else {
-        console.log(`[${now()}] ⬚ No seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
-      }
+    } else if (hasSeatsPreviously) {
+      // Handle the rare case where text.includes was true but count is 0
+      console.log(`[${now()}] ⬚ Seats are now GONE (unexpected) in Floor ${floor} | ${zone} (sbid=${blockId})`);
+      seatCache.delete(blockId);
     }
 
     return count;
@@ -166,16 +190,17 @@ async function melonCheckSingleBlock(block) {
 
 function sortBlocks(blocks) {
   return blocks.sort((a, b) => {
-    const rawFloorA = Number(a.sntv?.f);
-    const rawFloorB = Number(b.sntv?.f);
+    // Optimized: Use pre-processed floor and zone
+    const rawFloorA = Number(a.floor);
+    const rawFloorB = Number(b.floor);
 
     const floorA = Number.isFinite(rawFloorA) ? rawFloorA : -1;
     const floorB = Number.isFinite(rawFloorB) ? rawFloorB : -1;
 
     if (floorA !== floorB) return floorA - floorB;
 
-    const zoneA = (a.sntv?.a ?? "").toString().toUpperCase();
-    const zoneB = (b.sntv?.a ?? "").toString().toUpperCase();
+    const zoneA = a.zone.toUpperCase();
+    const zoneB = b.zone.toUpperCase();
     if (zoneA !== zoneB) return zoneA.localeCompare(zoneB);
 
     const idA = Number(a.sbid);
@@ -187,9 +212,10 @@ function sortBlocks(blocks) {
 }
 
 function logSortedBlocks(blocks) {
+  // Optimized: Use pre-processed floor and zone
   const table = blocks.map(b => ({
-    floor: b.sntv?.f ?? "UNKNOWN",
-    zone: b.sntv?.a ?? "UNKNOWN",
+    floor: b.floor,
+    zone: b.zone,
     sbid: b.sbid
   }));
 
