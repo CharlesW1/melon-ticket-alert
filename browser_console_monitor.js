@@ -27,6 +27,12 @@ function now() {
   return new Date().toLocaleTimeString();
 }
 
+function parseMelonJSONP(text) {
+  const startIdx = text.indexOf('(') + 1;
+  const endIdx = text.lastIndexOf(')');
+  return JSON.parse(text.slice(startIdx, endIdx));
+}
+
 let lastRequestTime = 0;
 let requestThrottleMs = 10000; // Default to 10 seconds
 
@@ -83,31 +89,39 @@ async function melonGetBlockList() {
   try {
     const response = await throttledFetch(url);
     const text = await response.text();
-
-    // Optimized: Use slice instead of multiple replaces for better performance and robustness
-    const startIdx = text.indexOf('(') + 1;
-    const endIdx = text.lastIndexOf(')');
-    const json = JSON.parse(text.slice(startIdx, endIdx));
+    const json = parseMelonJSONP(text);
 
     const rawBlocks = json?.seatData?.da?.sb || [];
 
-    // Optimized: Pre-process block data to avoid repeated calculations in the monitor loop
-    const blocks = rawBlocks.map(block => ({
-      ...block,
-      zone: block.sntv?.a || "UNKNOWN",
-      floor: block.sntv?.f || "UNKNOWN",
-      // Pre-construct the URL once to avoid template literal overhead in high-frequency checks
-      seatMapUrl: `https://tkglobal.melon.com/tktapi/product/seat/seatMapList.json` +
+    // Optimized: Pre-process block data to avoid redundant operations in the loop
+    const blocks = rawBlocks.map(b => {
+      const floor = b.sntv?.f || "UNKNOWN";
+      const zone = b.sntv?.a || "UNKNOWN";
+      const sbid = b.sbid;
+
+      const rawFloor = Number(floor);
+      const floorNum = Number.isFinite(rawFloor) ? rawFloor : -1;
+
+      const seatMapUrl =
+        `https://tkglobal.melon.com/tktapi/product/seat/seatMapList.json` +
         `?callback=getSeatListCallBack` +
         `&v=1` +
         `&prodId=${MELON_CONFIG.prodId}` +
         `&scheduleNo=${MELON_CONFIG.scheduleNo}` +
-        `&blockId=${block.sbid}` +
+        `&blockId=${sbid}` +
         `&pocCode=${MELON_CONFIG.pocCode}` +
-        `&corpCodeNo=`
-    }));
+        `&corpCodeNo=`;
 
-    console.log(`[${now()}] ✅ Loaded and pre-processed ${blocks.length} blocks.`);
+      return {
+        ...b,
+        floor,
+        zone,
+        floorNum,
+        seatMapUrl
+      };
+    });
+
+    console.log(`[${now()}] ✅ Loaded ${blocks.length} blocks.`);
     return blocks;
   } catch (e) {
     console.error(`[${now()}] ❌ Failed to fetch block list`, e);
@@ -119,38 +133,32 @@ async function melonGetBlockList() {
 const seatCache = new Map();
 
 async function melonCheckSingleBlock(block) {
-  // Optimized: Use pre-processed properties
-  const { zone, floor, sbid: blockId, seatMapUrl } = block;
+  const { floor, zone, sbid, seatMapUrl } = block;
 
-  const hasSeatsPreviously = seatCache.has(blockId);
+  const hasSeatsPreviously = seatCache.has(sbid);
   // Use halved throttle for high-frequency checks if seats were previously found
   const throttleOverride = hasSeatsPreviously ? Math.max(requestThrottleMs / 2, 5000) : null;
 
   const priorityLabel = hasSeatsPreviously ? "[PRIORITY] " : "";
-  console.log(`[${now()}] ${priorityLabel}🔎 Checking block: Floor ${floor} | ${zone} | sbid=${blockId}`);
+  console.log(`[${now()}] ${priorityLabel}🔎 Checking block: Floor ${floor} | ${zone} | sbid=${sbid}`);
 
   try {
     const response = await throttledFetch(seatMapUrl, throttleOverride);
     const text = await response.text();
 
-    // Performance Optimization: Fast-path for empty blocks.
-    // Most blocks are empty. Checking the raw text for the existence of an ID
-    // is significantly faster than slicing, parsing, and iterating over a large JSON.
+    // Optimized: Fast-path heuristic. If '"sid":"' isn't in the raw text, no seats are available.
+    // This avoids JSON.parse() and array iteration in the most common case.
     if (!text.includes('"sid":"')) {
       if (hasSeatsPreviously) {
-        console.log(`[${now()}] ⬚ Seats are now GONE in Floor ${floor} | ${zone} (sbid=${blockId})`);
-        seatCache.delete(blockId);
+        console.log(`[${now()}] ⬚ Seats are now GONE in Floor ${floor} | ${zone} (sbid=${sbid})`);
+        seatCache.delete(sbid);
       } else {
-        console.log(`[${now()}] ⬚ No seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
+        console.log(`[${now()}] ⬚ No seats in Floor ${floor} | ${zone} (sbid=${sbid})`);
       }
       return 0;
     }
 
-    // Optimized: Use slice instead of multiple replaces for better performance and robustness
-    const startIdx = text.indexOf('(') + 1;
-    const endIdx = text.lastIndexOf(')');
-    const json = JSON.parse(text.slice(startIdx, endIdx));
-
+    const json = parseMelonJSONP(text);
     let count = 0;
     const st = json?.seatData?.st;
     if (st) {
@@ -166,21 +174,25 @@ async function melonCheckSingleBlock(block) {
     }
 
     if (count > 0) {
-      console.log(`[${now()}] 🎫 FOUND ${count} seats in Floor ${floor} | ${zone} (sbid=${blockId})`);
-      await melonSendDiscord(`🎫 **${count} seats available**\nFloor ${floor} | ${zone} (${blockId})`);
+      console.log(`[${now()}] 🎫 FOUND ${count} seats in Floor ${floor} | ${zone} (sbid=${sbid})`);
+      await melonSendDiscord(`🎫 **${count} seats available**\nFloor ${floor} | ${zone} (${sbid})`);
 
       // Update last checked time
-      seatCache.set(blockId, Date.now());
-    } else if (hasSeatsPreviously) {
-      // Handle the rare case where text.includes was true but count is 0
-      console.log(`[${now()}] ⬚ Seats are now GONE (unexpected) in Floor ${floor} | ${zone} (sbid=${blockId})`);
-      seatCache.delete(blockId);
+      seatCache.set(sbid, Date.now());
+    } else {
+      // This case handles if "sid" was present but all were null (unexpected based on API observation)
+      if (hasSeatsPreviously) {
+        console.log(`[${now()}] ⬚ Seats are now GONE in Floor ${floor} | ${zone} (sbid=${sbid})`);
+        seatCache.delete(sbid);
+      } else {
+        console.log(`[${now()}] ⬚ No seats in Floor ${floor} | ${zone} (sbid=${sbid})`);
+      }
     }
 
     return count;
 
   } catch (e) {
-    console.error(`[${now()}] ❌ Failed checking Floor ${floor} | ${zone} (sbid=${blockId})`, e);
+    console.error(`[${now()}] ❌ Failed checking Floor ${floor} | ${zone} (sbid=${sbid})`, e);
     return 0;
   }
 }
@@ -190,17 +202,10 @@ async function melonCheckSingleBlock(block) {
 
 function sortBlocks(blocks) {
   return blocks.sort((a, b) => {
-    // Optimized: Use pre-processed floor and zone
-    const rawFloorA = Number(a.floor);
-    const rawFloorB = Number(b.floor);
+    if (a.floorNum !== b.floorNum) return a.floorNum - b.floorNum;
 
-    const floorA = Number.isFinite(rawFloorA) ? rawFloorA : -1;
-    const floorB = Number.isFinite(rawFloorB) ? rawFloorB : -1;
-
-    if (floorA !== floorB) return floorA - floorB;
-
-    const zoneA = a.zone.toUpperCase();
-    const zoneB = b.zone.toUpperCase();
+    const zoneA = a.zone.toString().toUpperCase();
+    const zoneB = b.zone.toString().toUpperCase();
     if (zoneA !== zoneB) return zoneA.localeCompare(zoneB);
 
     const idA = Number(a.sbid);
@@ -212,7 +217,6 @@ function sortBlocks(blocks) {
 }
 
 function logSortedBlocks(blocks) {
-  // Optimized: Use pre-processed floor and zone
   const table = blocks.map(b => ({
     floor: b.floor,
     zone: b.zone,
