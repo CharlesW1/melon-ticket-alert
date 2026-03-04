@@ -146,9 +146,9 @@ async function melonCheckSingleBlock(block) {
     const response = await throttledFetch(seatMapUrl, throttleOverride);
     const text = await response.text();
 
-    // Optimized: Fast-path heuristic. If '"sid"' isn't in the raw text, no seats are available.
+    // Optimized: Fast-path heuristic. If '"sid":"' isn't in the raw text, no seats are available.
     // This avoids JSON.parse() and array iteration in the most common case.
-    if (!text.includes('"sid"')) {
+    if (!text.includes('"sid":"')) {
       if (hasSeatsPreviously) {
         console.log(`[${now()}] ⬚ Seats are now GONE in Floor ${floor} | ${zone} (sbid=${sbid})`);
         seatCache.delete(sbid);
@@ -160,6 +160,7 @@ async function melonCheckSingleBlock(block) {
 
     const json = parseMelonJSONP(text);
     let count = 0;
+    let seatDetails = [];
     const st = json?.seatData?.st;
     if (st) {
       // Optimized & Fixed: Check all seat grades (st) and avoid unnecessary property lookups in inner loop
@@ -167,15 +168,21 @@ async function melonCheckSingleBlock(block) {
         const ss = st[i].ss;
         if (ss) {
           for (let j = 0, lenJ = ss.length; j < lenJ; j++) {
-            if (ss[j].sid !== null) count++;
+            const seat = ss[j];
+            if (seat.sid !== null) {
+              count++;
+              // Collect seat details if available (e.g., "12", "A-15")
+              if (seat.sn) seatDetails.push(seat.sn);
+            }
           }
         }
       }
     }
 
     if (count > 0) {
-      console.log(`[${now()}] 🎫 FOUND ${count} seats in Floor ${floor} | ${zone} (sbid=${sbid})`);
-      await melonSendDiscord(`🎫 **${count} seats available**\nFloor ${floor} | ${zone} (${sbid})`);
+      const seatInfo = seatDetails.length > 0 ? ` (Seats: ${seatDetails.join(", ")})` : "";
+      console.log(`[${now()}] 🎫 FOUND ${count} seats in Floor ${floor} | ${zone} (sbid=${sbid})${seatInfo}`);
+      await melonSendDiscord(`🎫 **${count} seats available**\nFloor ${floor} | ${zone} (${sbid})${seatInfo}`);
 
       // Update last checked time
       seatCache.set(sbid, Date.now());
