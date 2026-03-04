@@ -146,9 +146,9 @@ async function melonCheckSingleBlock(block) {
     const response = await throttledFetch(seatMapUrl, throttleOverride);
     const text = await response.text();
 
-    // Optimized: Fast-path heuristic. If '"sid":"' isn't in the raw text, no seats are available.
+    // Optimized: Fast-path heuristic. If '"sid"' isn't in the raw text, no seats are available.
     // This avoids JSON.parse() and array iteration in the most common case.
-    if (!text.includes('"sid":"')) {
+    if (!text.includes('"sid"')) {
       if (hasSeatsPreviously) {
         console.log(`[${now()}] ⬚ Seats are now GONE in Floor ${floor} | ${zone} (sbid=${sbid})`);
         seatCache.delete(sbid);
