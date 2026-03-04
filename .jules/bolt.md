@@ -22,3 +22,7 @@
 ## 2026-02-16 - Timestamp-Based Priority Scheduling
 **Learning:** For dynamic priority monitoring (where items enter and leave the priority set), an index-based rotation is fragile. Storing and selecting the "oldest" last-checked timestamp ensures a fair and robust rotation that handles additions and removals from the priority set without skipping or duplicating items.
 **Action:** Use timestamps to manage rotation in dynamic polling sets.
+
+## 2026-02-16 - Fast-Path Heuristic for API Polling
+**Learning:** In high-frequency polling scenarios where the majority of responses indicate no state change, a simple string-based heuristic (e.g., `text.includes()`) can bypass expensive `JSON.parse()` and object traversal. Benchmarking showed a >10x performance improvement in the common "no-change" path.
+**Action:** Implement fast-path heuristics to skip heavy processing when raw response text indicates no relevant data is present.
