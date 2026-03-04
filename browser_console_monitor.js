@@ -52,20 +52,17 @@ async function throttledFetch(url, throttleOverrideMs = null) {
   return fetch(url);
 }
 
-// Pre-calculate Discord mention tag and config status
-const isDiscordConfigured = DISCORD_CONFIG.webhookUrl && DISCORD_CONFIG.webhookUrl !== "your_discord_webhook_url";
-const discordMentionTag = (isDiscordConfigured && DISCORD_CONFIG.userId && DISCORD_CONFIG.userId !== "your_discord_user_id") ? `<@${DISCORD_CONFIG.userId}>` : '';
-
 async function melonSendDiscord(message) {
-  if (!isDiscordConfigured) {
+  if (!DISCORD_CONFIG.webhookUrl || DISCORD_CONFIG.webhookUrl === "your_discord_webhook_url") {
     console.log('Discord webhook not configured, skipping notification');
     return;
   }
+  const tag = (DISCORD_CONFIG.userId && DISCORD_CONFIG.userId !== "your_discord_user_id") ? `<@${DISCORD_CONFIG.userId}>` : '';
   try {
     await fetch(DISCORD_CONFIG.webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: `${discordMentionTag} ${message}` })
+      body: JSON.stringify({ content: `${tag} ${message}` })
     });
   } catch (e) {
     console.error(`[${now()}] ❌ Failed to send Discord notification`, e);
